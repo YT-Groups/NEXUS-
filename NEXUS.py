@@ -9,6 +9,9 @@ import joblib
 import datetime
 import os
 import logging
+import psycopg2
+import psycopg2.extras
+from dotenv import load_dotenv
 
 class NEXUSCreditEngine:
     """
@@ -16,13 +19,27 @@ class NEXUSCreditEngine:
     for offline microfinance institutions to evaluate creditworthiness across sectors.
     """
     
-    def __init__(self, base_dir="./models"):
-        """Initialize the NEXUS engine with necessary components."""
+    def __init__(self, base_dir="./models", db_config=None):
+        """Initialize the NEXUS engine with database connection"""
         self.base_dir = base_dir
         self.models = {}
         self.sector_configs = {}
         self.default_config = None
         self.logger = self._setup_logging()
+        self.db_connection = None
+
+        # Load environment variables if .env exists
+        load_dotenv()
+        
+        # Initialize database connection if config provided
+        if db_config or os.getenv('DB_HOST'):
+            self.connect_to_database(db_config or {
+                'host': os.getenv('DB_HOST'),
+                'port': os.getenv('DB_PORT'),
+                'database': os.getenv('DB_NAME'),
+                'user': os.getenv('DB_USER'),
+                'password': os.getenv('DB_PASSWORD')
+            })
         
         # Ensure model directory exists
         os.makedirs(base_dir, exist_ok=True)
@@ -190,25 +207,25 @@ class NEXUSCreditEngine:
         # Basic features that should be present for all sectors
         features = {
             # Client demographics
-            'age': client_data.get('age', 0),
+            'age': float(client_data.get('age', 0)),
             'education': client_data.get('education', 'unknown'),
-            'dependents': client_data.get('dependents', 0),
+            'dependents': float(client_data.get('dependents', 0)),
             
             # Business information
-            'business_age': client_data.get('business_age', 0),
+            'business_age': float(client_data.get('business_age', 0)),
             'business_type': client_data.get('business_type', 'unknown'),
             'location_type': client_data.get('location_type', 'unknown'),
             
             # Financial indicators
-            'income': financial_data.get('average_monthly_income', 0),
-            'expense_ratio': financial_data.get('expense_to_income_ratio', 0),
-            'avg_monthly_profit': financial_data.get('average_monthly_profit', 0),
-            'cash_flow_stability': financial_data.get('cash_flow_stability_index', 0),
+            'income': float(financial_data.get('average_monthly_income', 0)),
+            'expense_ratio': float(financial_data.get('expense_to_income_ratio', 0)),
+            'avg_monthly_profit': float(financial_data.get('average_monthly_profit', 0)),
+            'cash_flow_stability': float(financial_data.get('cash_flow_stability_index', 0)),
             
             # Credit history
-            'previous_loans': financial_data.get('previous_loans_count', 0),
-            'repayment_rate': financial_data.get('previous_repayment_rate', 1.0),
-            'days_overdue': financial_data.get('average_days_overdue', 0)
+            'previous_loans': float(financial_data.get('previous_loans_count', 0)),
+            'repayment_rate': float(financial_data.get('previous_repayment_rate', 1.0)),
+            'days_overdue': float(financial_data.get('average_days_overdue', 0))
         }
         
         # Add sector-specific features if available
@@ -217,7 +234,7 @@ class NEXUSCreditEngine:
         
         return features
     
-    def _calculate_component_scores(self, features, sector):
+    def _calculate_component_scores(self, features, sector, financial_data):
         """Calculate component scores based on feature weights."""
         config = self.sector_configs.get(sector, self.default_config)
         weights = config.get('feature_weights', self.default_config['feature_weights'])
@@ -295,6 +312,7 @@ class NEXUSCreditEngine:
         
         # Loan amount recommendation
         # Simple approach: approve up to 6 months of income based on credit score
+        max_score = config.get('max_score', self.default_config['max_score'])
         if credit_score >= approval_threshold:
             max_multiplier = 6 * (credit_score / max_score)
             recommended_amount = min(loan_amount, income * max_multiplier)
@@ -402,11 +420,14 @@ class NEXUSCreditEngine:
             return {"error": "Incomplete data provided"}
         
         try:
+            # Generate assessment ID first
+            assessment_id = f"NEXUS-{datetime.datetime.now().strftime('%Y%m%d%H%M%S')}"
+
             # Extract features from raw data
             features = self._extract_features(client_data, financial_data, sector)
             
             # Calculate component scores
-            component_scores = self._calculate_component_scores(features, sector)
+            component_scores = self._calculate_component_scores(features, sector, financial_data)
             
             # Calculate final credit score
             credit_score = self._calculate_final_score(component_scores, sector)
@@ -427,7 +448,7 @@ class NEXUSCreditEngine:
             # Create the full assessment result
             assessment = {
                 "client_id": client_data.get('client_id', 'unknown'),
-                "assessment_id": f"NEXUS-{datetime.datetime.now().strftime('%Y%m%d%H%M%S')}",
+                "assessment_id": assessment_id,
                 "assessment_date": datetime.datetime.now().isoformat(),
                 "sector": sector,
                 "credit_score": credit_score,
@@ -452,7 +473,8 @@ class NEXUSCreditEngine:
             
         except Exception as e:
             self.logger.error(f"Error in credit assessment: {str(e)}")
-            return {"error": f"Assessment failed: {str(e)}"}
+            return {"error": f"Assessment failed: {str(e)}",
+            "assessment_id": assessment_id }
     
     def _calculate_monthly_payment(self, principal, annual_rate, term_months):
         """Calculate monthly loan payment."""
@@ -547,35 +569,10 @@ class NEXUSCreditEngine:
             return {"status": "success", "sector": sector}
         except Exception as e:
             return {"error": f"Import failed: {str(e)}"}
-        
-        import psycopg2
-import psycopg2.extras
 
+    #Database Methods
 
-    
-def __init__(self, base_dir="./models", db_config=None):
-        """Initialize the NEXUS engine with necessary components."""
-        self.base_dir = base_dir
-        self.models = {}
-        self.sector_configs = {}
-        self.default_config = None
-        self.logger = self._setup_logging()
-        self.db_connection = None
-        
-        # Initialize database connection if config provided
-        if db_config:
-            self.connect_to_database(db_config)
-        
-        # Ensure model directory exists
-        os.makedirs(base_dir, exist_ok=True)
-        
-        # Load configurations and models
-        self._load_configurations()
-        self._load_models()
-        
-        self.logger.info("NEXUS Credit Engine initialized successfully")
-    
-def connect_to_database(self, db_config):
+    def connect_to_database(self, db_config):
         """Connect to PostgreSQL database."""
         try:
             self.db_connection = psycopg2.connect(
@@ -591,14 +588,14 @@ def connect_to_database(self, db_config):
             self.logger.error(f"Database connection failed: {str(e)}")
             return False
     
-def close_database_connection(self):
+    def close_database_connection(self):
         """Close the database connection."""
         if self.db_connection:
             self.db_connection.close()
             self.db_connection = None
             self.logger.info("Database connection closed")
     
-def get_client_data_from_db(self, client_id):
+    def get_client_data_from_db(self, client_id):
         """Retrieve client data from the database."""
         if not self.db_connection:
             self.logger.error("No database connection established")
@@ -626,7 +623,7 @@ def get_client_data_from_db(self, client_id):
             self.logger.error(f"Error retrieving client data: {str(e)}")
             return None
     
-def get_financial_data_from_db(self, client_id):
+    def get_financial_data_from_db(self, client_id):
         """Retrieve financial data from the database."""
         if not self.db_connection:
             self.logger.error("No database connection established")
@@ -651,7 +648,20 @@ def get_financial_data_from_db(self, client_id):
             cursor.close()
             
             if result:
-                return dict(result)
+                return {
+                'average_monthly_income': float(result['average_monthly_income']),
+                'average_monthly_expenses': float(result['average_monthly_expenses']),
+                'expense_to_income_ratio': float(result['expense_to_income_ratio']),
+                'average_monthly_profit': float(result['average_monthly_profit']),
+                'cash_flow_stability_index': float(result['cash_flow_stability_index']),
+                'previous_loans_count': float(result['previous_loans_count']),
+                'previous_repayment_rate': float(result['previous_repayment_rate']),
+                'average_days_overdue': float(result['average_days_overdue']),
+                'inventory_turnover': float(result['inventory_turnover']),
+                'customer_base_size': float(result['customer_base_size']),
+                'location_quality': result['location_quality'],
+                'collateral_value_ratio': float(result['collateral_value_ratio']),
+            }
             else:
                 self.logger.warning(f"No financial data found for client ID: {client_id}")
                 return None
@@ -660,7 +670,7 @@ def get_financial_data_from_db(self, client_id):
             self.logger.error(f"Error retrieving financial data: {str(e)}")
             return None
     
-def get_loan_request_from_db(self, request_id):
+    def get_loan_request_from_db(self, request_id):
         """Retrieve loan request from the database."""
         if not self.db_connection:
             self.logger.error("No database connection established")
@@ -687,10 +697,14 @@ def get_loan_request_from_db(self, request_id):
             self.logger.error(f"Error retrieving loan request: {str(e)}")
             return None
     
-def save_assessment_result_to_db(self, assessment_result):
+    def save_assessment_result_to_db(self, assessment_result):
         """Save assessment result to the database."""
         if not self.db_connection:
             self.logger.error("No database connection established")
+            return False
+        
+        if 'assessment_id' not in assessment_result:
+            self.logger.error("Missing assessment_id in result")
             return False
         
         try:
@@ -755,7 +769,7 @@ def save_assessment_result_to_db(self, assessment_result):
             self.logger.error(f"Error saving assessment result: {str(e)}")
             return False
     
-def assess_credit_from_db(self, client_id, loan_request_id=None, sector=None):
+    def assess_credit_from_db(self, client_id, loan_request_id=None, sector=None):
         """Perform credit assessment using data from the database."""
         # Get client data
         client_data = self.get_client_data_from_db(client_id)
@@ -788,19 +802,36 @@ def assess_credit_from_db(self, client_id, loan_request_id=None, sector=None):
 
 
     # Perform credit assessment
-result = engine.assess_credit(client_data, financial_data, "retail", loan_request)
+if __name__ == "__main__":
+    # Initialize engine with database config
+    engine = NEXUSCreditEngine(db_config={
+        'host': 'localhost',
+        'database': 'nexus',
+        'port': 5050,
+        'user': 'postgres',
+        'password': 'admin'
+    })
+    
+    # Perform assessment for client 1
+    result = engine.assess_credit_from_db(client_id=1)
     
     # Print the results
-print(f"Credit Score: {result['credit_score']}")
-print(f"Decision: {result['eligibility']}")
-print(f"Recommended Amount: ${result['loan_terms']['recommended_amount']:.2f}")
-print(f"Interest Rate: {result['loan_terms']['interest_rate']}%")
-print(f"Term: {result['loan_terms']['term_months']} months")
-print(f"Monthly Payment: ${result['loan_terms']['monthly_payment']:.2f}")
-print("\nTop Factors:")
-for factor in result['explanation']['top_factors']:
-        print(f"- {factor['factor']}: {factor['description']}")
-print("\nImprovement Areas:")
-for area in result['explanation']['improvement_areas']:
-        print(f"- {area['factor']}: {area['description']}")
-        print(f"  Recommendation: {area['recommendation']}")
+    if 'error' in result:
+        print(f"Error: {result['error']}")
+    else:
+        print(f"Credit Score: {result['credit_score']}")
+        print(f"Decision: {result['eligibility']}")
+        print(f"Recommended Amount: ${result['loan_terms']['recommended_amount']:.2f}")
+        print(f"Interest Rate: {result['loan_terms']['interest_rate']}%")
+        print(f"Term: {result['loan_terms']['term_months']} months")
+        print(f"Monthly Payment: ${result['loan_terms']['monthly_payment']:.2f}")
+        print("\nTop Factors:")
+        for factor in result['explanation']['top_factors']:
+            print(f"- {factor['factor']}: {factor['description']}")
+            print("\nImprovement Areas:")
+        for area in result['explanation']['improvement_areas']:
+            print(f"- {area['factor']}: {area['description']}")
+            print(f"  Recommendation: {area['recommendation']}")
+
+    # Save assessment to database
+    engine.save_assessment_result_to_db(result)
