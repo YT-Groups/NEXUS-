@@ -30,6 +30,18 @@ NEXUS (Neural Evaluation for Xpanded User Scoring) is a credit assessment engine
 
 3. Configure the database settings in `config/.env`.
 
+   It should look like this.
+   Be sure to specify the port your Postgres Server is running on in place of <your_port>
+   You can change the database name, username and database password as you see fit, but ensure those changes are in the commands you run
+
+   ```
+   DB_HOST=localhost
+   DB_PORT=<your_port>
+   DB_NAME=nexus
+   DB_USER=postgres
+   DB_PASSWORD=admin
+   ```
+
 4. Initializing the database:
    With PostgreSQL installed create a database and user:
 
